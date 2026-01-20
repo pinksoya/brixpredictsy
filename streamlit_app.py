@@ -1,151 +1,152 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import numpy as np
+import joblib
+import matplotlib.pyplot as plt
+import koreanize_matplotlib
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# Koreanize-matplotlib 적용
+try:
+    import koreanize_matplotlib
+    koreanize_matplotlib.set_rc()
+except:
+    # Fallback: 기본 폰트 설정
+    plt.rcParams['font.family'] = 'DejaVu Sans'
+    plt.rcParams['axes.unicode_minus'] = False
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+st.set_page_config(page_title="감귤 당도 예측기", layout="wide")
+st.title("🍊 감귤 당도 예측기")
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+# 모델 로드
+model = joblib.load("brix_model.joblib")
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+# 세션 상태 초기화 (히스토리 저장)
+if 'history' not in st.session_state:
+    st.session_state.history = []
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+# 메인 레이아웃
+st.subheader("🎯 파라미터별 영향도 분석")
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+# 좌우 2열 레이아웃
+left_col, right_col = st.columns([1, 2])
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
+with left_col:
+    st.write("### 파라미터 슬라이더")
+    
+    # Minimum Temperature Slider | 최저기온 (먼저 설정)
+    st.write("**최저기온**")
+    min_temp_slider = st.slider(
+        "Min Temp",
+        min_value=0.0,
+        max_value=30.0,
+        value=15.0,
+        step=0.5,
+        label_visibility="collapsed",
+        key="min_temp_slider"
     )
+    st.caption(f"값: {min_temp_slider:.2f}°C")
+    
+    # Average Temperature Slider | 평균기온 (최저기온 >= 평균기온 <= 최고기온)
+    st.write("**평균기온**")
+    avg_temp_slider = st.slider(
+        "Avg Temp",
+        min_value=min_temp_slider,
+        max_value=35.0,
+        value=min(20.0, 35.0) if min_temp_slider <= 20.0 else min_temp_slider,
+        step=0.5,
+        label_visibility="collapsed",
+        key="avg_temp_slider"
+    )
+    st.caption(f"값: {avg_temp_slider:.2f}°C")
+    
+    # Maximum Temperature Slider | 최고기온 (평균기온 <= 최고기온)
+    st.write("**최고기온**")
+    max_temp_slider = st.slider(
+        "Max Temp",
+        min_value=avg_temp_slider,
+        max_value=40.0,
+        value=max(25.0, avg_temp_slider),
+        step=0.5,
+        label_visibility="collapsed",
+        key="max_temp_slider"
+    )
+    st.caption(f"값: {max_temp_slider:.2f}°C")
+    
+    # Sunlight Hours Slider | 가조시간
+    st.write("**가조시간**")
+    sunlight_slider = st.slider(
+        "Sunlight",
+        min_value=9.9,
+        max_value=14.4,
+        value=12.0,
+        step=0.1,
+        label_visibility="collapsed",
+        key="sunlight_slider"
+    )
+    st.caption(f"값: {sunlight_slider:.2f}시간")
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+with right_col:
+    # 현재값으로 예측 | Predict with Current Values
+    current_input = np.array([[avg_temp_slider, max_temp_slider, min_temp_slider, sunlight_slider]])
+    current_prediction = model.predict(current_input)[0]
+    
+    # 예측 결과 저장 (히스토리)
+    st.session_state.history.append({
+        "평균기온": avg_temp_slider,
+        "최고기온": max_temp_slider,
+        "최저기온": min_temp_slider,
+        "가조시간": sunlight_slider,
+        "예측당도": current_prediction
+    })
+    
+    # 예측 결과 표시 | Display Prediction Result
+    st.write("### 예측 결과")
+    
+    # 예측값을 크게 표시
+    col_main = st.columns([1])
+    with col_main[0]:
+        st.metric("감귤 당도 (Brix)", f"{current_prediction:.2f}°Bx", delta=None)
+    
+    st.divider()
+    
+    # 현재 입력값 요약 | Current Input Summary
+    st.write("### 입력 파라미터")
+    col_input = st.columns(4)
+    with col_input[0]:
+        st.info(f"평균기온\n{avg_temp_slider:.1f}°C", icon="🌡️")
+    with col_input[1]:
+        st.info(f"최고기온\n{max_temp_slider:.1f}°C", icon="🔥")
+    with col_input[2]:
+        st.info(f"최저기온\n{min_temp_slider:.1f}°C", icon="❄️")
+    with col_input[3]:
+        st.info(f"가조시간\n{sunlight_slider:.1f}시간", icon="☀️")
 
-    return gdp_df
+# 히스토리 표시 (메인 영역 아래)
+st.divider()
+st.subheader("📊 예측 히스토리")
 
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+if st.session_state.history:
+    # 히스토리 데이터프레임
+    history_df = pd.DataFrame(st.session_state.history)
+    
+    # 중복 제거 (최신값만 유지) - 슬라이더가 변할 때마다 추가되는 것을 방지
+    history_df = history_df.drop_duplicates(subset=['평균기온', '최고기온', '최저기온', '가조시간'], keep='last')
+    
+    # 히스토리 테이블
+    display_df = history_df.copy()
+    display_df['예측당도'] = display_df['예측당도'].apply(lambda x: f"{x:.2f}°Bx")
+    display_df['평균기온'] = display_df['평균기온'].apply(lambda x: f"{x:.2f}°C")
+    display_df['최고기온'] = display_df['최고기온'].apply(lambda x: f"{x:.2f}°C")
+    display_df['최저기온'] = display_df['최저기온'].apply(lambda x: f"{x:.2f}°C")
+    display_df['가조시간'] = display_df['가조시간'].apply(lambda x: f"{x:.2f}시간")
+    
+    st.dataframe(display_df, use_container_width=True)
+    
+    # 히스토리 초기화 버튼
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        if st.button("🗑️ 히스토리 초기화"):
+            st.session_state.history = []
+            st.rerun()
+else:
+    st.info("아직 예측 기록이 없습니다.")
